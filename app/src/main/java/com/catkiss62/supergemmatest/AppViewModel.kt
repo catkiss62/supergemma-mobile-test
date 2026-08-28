@@ -2,8 +2,11 @@ package com.catkiss62.supergemmatest
 
 import android.app.Application
 import android.net.Uri
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.StatFs
+import android.app.ActivityManager
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateListOf
@@ -77,6 +80,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             ChatMessage.Role.ASSISTANT,
             "这是独立测试 App。文字由 DeepSeek API 回复；图片只交给手机里的 SuperGemma，原图不会上传。",
         )
+        RuntimeDiagnostics.consumeInterruptedLoad(context)?.let { recovered ->
+            modelStatus = "检测到上次加载模型时应用闪退"
+            diagnosticDetail = recovered
+        }
     }
 
     fun saveApiSettings() {
@@ -153,9 +160,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         diagnosticDetail = ""
         viewModelScope.launch {
             val started = System.currentTimeMillis()
+            RuntimeDiagnostics.markLoadStarted(context, model, selectedBackend)
             val result = runCatching {
                 withContext(Dispatchers.IO) { localRuntime.load(context, model.path, selectedBackend) }
             }
+            RuntimeDiagnostics.markLoadFinished(context)
             result.onSuccess {
                 isModelReady = true
                 modelStatus = "模型已就绪（${selectedBackend.label}）"
@@ -228,6 +237,34 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         chatMessages += ChatMessage(ChatMessage.Role.ASSISTANT, "对话已清空。")
     }
 
+    fun diagnosticSnapshot(): String {
+        val memory = ActivityManager.MemoryInfo().also {
+            context.getSystemService(ActivityManager::class.java)?.getMemoryInfo(it)
+        }
+        val storageRoot = context.getExternalFilesDir(null) ?: context.filesDir
+        val storage = StatFs(storageRoot.absolutePath)
+        val appVersion = runCatching {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName
+        }.getOrNull() ?: "未知"
+        return buildString {
+            appendLine("SuperGemma Mobile Test v$appVersion")
+            appendLine("设备：${Build.MANUFACTURER} ${Build.MODEL}")
+            appendLine("Android：${Build.VERSION.RELEASE} / API ${Build.VERSION.SDK_INT}")
+            appendLine("ABI：${Build.SUPPORTED_ABIS.joinToString()}")
+            appendLine("可用/总内存：${ModelImporter.humanSize(memory.availMem)} / ${ModelImporter.humanSize(memory.totalMem)}")
+            appendLine("App 目录可用空间：${ModelImporter.humanSize(storage.availableBytes)}")
+            appendLine("主后端：${selectedBackend.label}；视觉后端：GPU")
+            appendLine("状态：$modelStatus")
+            importedModel?.let {
+                appendLine("模型：${it.fileName} · ${ModelImporter.humanSize(it.sizeBytes)}")
+                appendLine("模型 SHA-256：${it.sha256}")
+            }
+            appendLine()
+            appendLine("错误/诊断：")
+            append(diagnosticDetail.ifBlank { "暂无详细错误。" })
+        }
+    }
+
     override fun onCleared() {
         localRuntime.close()
         super.onCleared()
@@ -236,7 +273,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private fun classifyLocalError(error: Throwable): String {
         val raw = error.stackTraceToString()
         val message = error.message.orEmpty()
-        return when {
+        val explanation = when {
             "more images than expected" in message.lowercase() || "max_num_images" in raw ->
                 "模型拒绝了图片输入：这个 .litertlm 包可能没有保留视觉部分，或 Gemma 4 图片模板与当前 LiteRT-LM 不兼容。\n\n$message"
             "failed to create engine" in message.lowercase() ->
@@ -245,6 +282,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 "内存不足。请关闭其他大型 App、重新打开本测试 App 后再加载。\n\n$message"
             else -> "${error::class.java.simpleName}：${message.ifBlank { "未知本地推理错误" }}"
         }
+        return "$explanation\n\n原始异常：\n${raw.take(12_000)}"
     }
 
     private fun Throwable.readableMessage(): String =

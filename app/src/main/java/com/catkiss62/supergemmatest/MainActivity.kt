@@ -1,5 +1,7 @@
 package com.catkiss62.supergemmatest
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.graphics.BitmapFactory
 import android.net.Uri
@@ -352,6 +354,26 @@ private fun VisionPage(vm: AppViewModel, onSendToDeepSeek: () -> Unit) {
                     }
                     Text(if (vm.isModelReady) "重新加载模型" else "加载模型")
                 }
+                Text(
+                    "如果 CPU 加载导致闪退，请重新打开 App；系统退出原因会自动恢复到这里。",
+                    color = Color(0xFF6A5962),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                if (vm.diagnosticDetail.isNotBlank() &&
+                    (vm.modelStatus.contains("加载") || vm.modelStatus.contains("闪退"))
+                ) {
+                    androidx.compose.foundation.text.selection.SelectionContainer {
+                        Text(vm.diagnosticDetail, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                OutlinedButton(
+                    onClick = {
+                        val clipboard = context.getSystemService(ClipboardManager::class.java)
+                        clipboard?.setPrimaryClip(ClipData.newPlainText("SuperGemma 诊断", vm.diagnosticSnapshot()))
+                        Toast.makeText(context, "诊断信息已复制（不包含 API Key）", Toast.LENGTH_SHORT).show()
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("复制诊断信息") }
             }
         }
 
