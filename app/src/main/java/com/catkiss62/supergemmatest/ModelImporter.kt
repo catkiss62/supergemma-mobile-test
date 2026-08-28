@@ -23,12 +23,20 @@ object ModelImporter {
         )?.use { cursor ->
             if (cursor.moveToFirst()) {
                 cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME).takeIf { it >= 0 }
-                    ?.let { name = cursor.getString(it) }
+                    ?.let { index -> cursor.getString(index)?.takeIf(String::isNotBlank)?.let { name = it } }
                 cursor.getColumnIndex(OpenableColumns.SIZE).takeIf { it >= 0 }
-                    ?.let { size = cursor.getLong(it) }
+                    ?.let { index -> if (!cursor.isNull(index)) size = cursor.getLong(index) }
             }
         }
+        if (size <= 0L) {
+            size = runCatching {
+                context.contentResolver.openFileDescriptor(uri, "r")?.use { it.statSize }
+            }.getOrNull() ?: -1L
+        }
         require(name.lowercase().endsWith(".litertlm")) { "请选择扩展名为 .litertlm 的模型文件。" }
+        require(size > 0L) {
+            "文件提供程序没有返回模型大小。请先把模型完整下载到手机“Download/下载”目录，再重新选择。"
+        }
         require(size in MIN_MODEL_SIZE..MAX_MODEL_SIZE) {
             "模型文件大小异常：${humanSize(size)}；本测试允许 100MB～8GB。"
         }
@@ -52,14 +60,15 @@ object ModelImporter {
         val safeName = source.name.replace(Regex("[^A-Za-z0-9._-]"), "_")
         val finalFile = File(importsDir, safeName)
         val partialFile = File(importsDir, "$safeName.partial")
-        partialFile.delete()
+        check(!partialFile.exists() || partialFile.delete()) { "无法清理上一次未完成的导入文件。" }
 
         val digest = MessageDigest.getInstance("SHA-256")
         var copied = 0L
         var lastProgressAt = 0L
+        onProgress(0f)
         context.contentResolver.openInputStream(uri)?.use { input ->
             FileOutputStream(partialFile).use { output ->
-                val buffer = ByteArray(1024 * 1024)
+                val buffer = ByteArray(4 * 1024 * 1024)
                 while (true) {
                     val count = input.read(buffer)
                     if (count < 0) break

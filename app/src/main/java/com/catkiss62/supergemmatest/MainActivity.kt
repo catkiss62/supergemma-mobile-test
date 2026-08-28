@@ -4,6 +4,7 @@ import android.content.Intent
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -245,9 +246,12 @@ private fun ChatBubble(message: ChatMessage) {
 private fun VisionPage(vm: AppViewModel, onSendToDeepSeek: () -> Unit) {
     val context = LocalContext.current
     val modelPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        uri?.let {
-            runCatching { context.contentResolver.takePersistableUriPermission(it, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
-            vm.importModel(it)
+        if (uri == null) {
+            vm.modelSelectionCancelled()
+        } else {
+            runCatching { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+            Toast.makeText(context, "已选择模型，开始导入", Toast.LENGTH_SHORT).show()
+            vm.importModel(uri)
         }
     }
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
@@ -275,16 +279,38 @@ private fun VisionPage(vm: AppViewModel, onSendToDeepSeek: () -> Unit) {
                         enabled = !vm.isImporting,
                     ) { Text("打开下载页") }
                     Button(
-                        onClick = { modelPicker.launch(arrayOf("*/*")) },
+                        onClick = {
+                            vm.beginModelSelection()
+                            modelPicker.launch(arrayOf("*/*"))
+                        },
                         enabled = !vm.isImporting && !vm.isModelLoading,
                     ) { Text("选择模型文件") }
                 }
+                Text(
+                    vm.modelStatus,
+                    color = if (vm.modelStatus.contains("失败") || vm.modelStatus.contains("没有选中")) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.primary
+                    },
+                    fontWeight = FontWeight.SemiBold,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
                 if (vm.isImporting && vm.importProgress >= 0f) {
                     androidx.compose.material3.LinearProgressIndicator(
                         progress = { vm.importProgress },
                         modifier = Modifier.fillMaxWidth(),
                     )
                     Text("正在复制并计算 SHA-256：${(vm.importProgress * 100).toInt()}%")
+                }
+                if (vm.diagnosticDetail.isNotBlank() &&
+                    (vm.isImporting || vm.modelStatus.contains("导入") || vm.modelStatus.contains("选中"))
+                ) {
+                    Text(
+                        vm.diagnosticDetail,
+                        color = Color(0xFF6A5962),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
                 }
                 vm.importedModel?.let { model ->
                     Text(

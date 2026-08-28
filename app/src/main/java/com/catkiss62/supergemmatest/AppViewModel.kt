@@ -48,6 +48,18 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         private set
     var selectedBackend by mutableStateOf(LocalBackend.CPU)
 
+    fun beginModelSelection() {
+        if (isImporting || isModelLoading || isRecognizing) return
+        modelStatus = "正在打开系统文件选择器…"
+        diagnosticDetail = "请选择 supergemma4-e4b-abliterated.litertlm（约 3.65GB）。"
+    }
+
+    fun modelSelectionCancelled() {
+        if (isImporting) return
+        modelStatus = if (importedModel == null) "没有选中模型文件" else "模型已导入，尚未加载"
+        diagnosticDetail = "文件选择已取消；请重新点击“选择模型文件”。"
+    }
+
     var selectedImage by mutableStateOf<PreparedImage?>(null)
         private set
     var imageStatus by mutableStateOf("尚未选择图片")
@@ -101,13 +113,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         if (isImporting || isModelLoading || isRecognizing) return
         isImporting = true
         importProgress = 0f
-        modelStatus = "正在检查并复制模型…请保持 App 在前台"
-        diagnosticDetail = ""
+        modelStatus = "已收到文件，正在读取大小并准备复制…"
+        diagnosticDetail = "导入期间请保持 App 在前台；3.65GB 文件可能需要几分钟。"
         viewModelScope.launch {
             val result = runCatching {
                 withContext(Dispatchers.IO) {
                     ModelImporter.import(context, uri) { progress ->
-                        mainHandler.post { importProgress = progress }
+                        mainHandler.post {
+                            importProgress = progress
+                            modelStatus = "正在复制模型：${(progress * 100).toInt()}%"
+                        }
                     }
                 }
             }
