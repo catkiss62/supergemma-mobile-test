@@ -58,7 +58,7 @@ class LocalModelRuntime : Closeable {
                 Content.Text(prompt),
             ),
         )
-        response.text.ifBlank { response.toString() }
+        response.toString().ifBlank { "模型未返回文本。" }
     }
 
     override fun close() {
